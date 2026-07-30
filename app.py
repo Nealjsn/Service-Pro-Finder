@@ -1,4 +1,5 @@
 import streamlit as st
+
 from serviceprofinder import find_service_pros
 
 st.title("Service Pro Finder")
@@ -13,4 +14,3 @@ if st.button("Search"):
     else:
         results = find_service_pros(zip_code, radius, profession)
         st.dataframe(results)
-
