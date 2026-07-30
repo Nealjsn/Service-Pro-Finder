@@ -29,6 +29,7 @@ def search_businesses(latitude, longitude, radius_miles, query):
         "Content-Type": "application/json",
         "X-Goog-Api-Key": GOOGLE_API_KEY,
         "X-Goog-FieldMask": (
+            "places.id,"
             "places.displayName,"
             "places.formattedAddress,"
             "places.nationalPhoneNumber,"
@@ -41,34 +42,53 @@ def search_businesses(latitude, longitude, radius_miles, query):
         ),
     }
 
-    radius_meters = radius_miles * 1609.34
+    if radius_miles < 20:
+        search_radii = [10]
+    else:
+        search_radii = [10, radius_miles]
 
-    body = {
-        "textQuery": query,
-        "locationBias": {
-            "circle": {
-                "center": {
-                    "latitude": latitude,
-                    "longitude": longitude,
-                },
-                "radius": radius_meters,
-            }
-        },
-    }
+    combined_places = {}
 
-    response = requests.post(url, headers=headers, json=body)
+    for search_radius in search_radii:
+        radius_meters = search_radius * 1609.34
 
-    data = response.json()
+        body = {
+            "textQuery": query,
+            "locationBias": {
+                "circle": {
+                    "center": {
+                        "latitude": latitude,
+                        "longitude": longitude,
+                    },
+                    "radius": radius_meters,
+                }
+            },
+        }
 
-    return data
+        response = requests.post(url, headers=headers, json=body, timeout=10)
+        response.raise_for_status()
+
+        data = response.json()
+        print(
+            f"{search_radius}-mile bias returned {len(data.get('places', []))} places"
+        )
+        places = data.get("places", [])
+
+        for place in places:
+            print(place["displayName"]["text"])
+            combined_places[place["id"]] = place
+
+    return {"places": list(combined_places.values())}
 
 
-def build_results(businesses, user_lat, user_lng):
+def build_results(businesses, user_lat, user_lng, radius_miles):
     results = []
     for business in businesses["places"]:
         bus_lat = business["location"]["latitude"]
         bus_lng = business["location"]["longitude"]
         distance = calculate_distance(user_lat, user_lng, bus_lat, bus_lng)
+        if distance > radius_miles +5:
+            continue
         results.append(
             {
                 "name": business["displayName"]["text"],
@@ -77,11 +97,12 @@ def build_results(businesses, user_lat, user_lng):
                 "website": business.get("websiteUri"),
                 "rating": business.get("rating"),
                 "reviews": business.get("userRatingCount"),
-                "distance (mi)": round(distance, 2)
+                "distance (mi)": round(distance, 2),
             }
         )
 
     return results
+
 
 def calculate_distance(user_lat, user_lng, bus_lat, bus_lng):
     earth_radius_miles = 3958.8
@@ -96,14 +117,13 @@ def calculate_distance(user_lat, user_lng, bus_lat, bus_lng):
 
     a = (
         math.sin(lat_diff / 2) ** 2
-        + math.cos(user_lat)
-        * math.cos(business_lat)
-        * math.sin(lng_diff / 2) ** 2
+        + math.cos(user_lat) * math.cos(business_lat) * math.sin(lng_diff / 2) ** 2
     )
 
     c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
     return earth_radius_miles * c
+
 
 def rank_results(results):
     C = 4.5
@@ -127,7 +147,7 @@ def rank_results(results):
 def find_service_pros(zip_code, radius, profession):
     user_lat, user_lng = get_coordinates(zip_code)
     businesses = search_businesses(user_lat, user_lng, radius, profession)
-    results = build_results(businesses, user_lat, user_lng)
+    results = build_results(businesses, user_lat, user_lng, radius)
 
     results = rank_results(results)
 
